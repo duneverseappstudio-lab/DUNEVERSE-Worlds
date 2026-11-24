@@ -1,20 +1,16 @@
-name: Materialize reviewed source
+name: Remove temporary publication transport
 on: [push, workflow_dispatch]
 permissions:
   contents: write
 jobs:
-  materialize:
+  cleanup:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, 'materialize')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: |
-          python3 restore_source.py
-          rm -f source/.github/workflows/test.yml
-          cp -a source/. .
-          rm -rf source
-          git config user.name "DUNEVERSE Studio"
-          git config user.email "duneverseappstudio-lab@users.noreply.github.com"
-          git add -f app python_tools .gitignore README.md
-          git commit -m "Materialize reviewed source tree"
+          git config user.name 'DUNEVERSE Studio'
+          git config user.email 'duneverseappstudio-lab@users.noreply.github.com'
+          git rm restore_source.py source-part-*.b64
+          git commit -m 'Remove temporary publication transport'
           git push
