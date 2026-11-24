@@ -21,7 +21,7 @@ class ProjectBackupTest(unittest.TestCase):
         INSERT INTO worlds VALUES('a','A',1),('b','B',1);
         INSERT INTO objects VALUES('s','a','star','S',.4,.5,.03),('p','a','planet','P',.6,.5,.02),('m','a','moon','M',.65,.5,.01),('r','b','rock','R',.2,.3,.01);
         INSERT INTO authored_orbits VALUES('p','s',60,0),('m','p',12,1);
-        INSERT INTO changes VALUES(1,'a','p',NULL,'synthetic');""")
+        INSERT INTO changes VALUES(1,'a','p',NULL,'{"id":"p","kind":"planet","name":"P","x":0.6,"y":0.5,"radius":0.02}' );""")
         c.close()
     def tearDown(self):self.tmp.cleanup()
     def rows(self,path):
