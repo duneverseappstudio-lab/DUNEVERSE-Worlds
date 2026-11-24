@@ -45,6 +45,9 @@ def _parent(path):
             nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             os.close(fd)
             fd = nxt
+        info = os.fstat(fd)
+        if info.st_uid != os.geteuid() or info.st_mode & 0o022:
+            raise PermissionError('Destination parent must be owned and not group/world writable')
         return raw, fd
     except BaseException:
         os.close(fd)
@@ -69,6 +72,35 @@ def _rename_new_dir(fd, source, destination):
     if rename(fd, os.fsencode(source), fd, os.fsencode(destination), 1) != 0:
         code = ctypes.get_errno()
         raise OSError(code, os.strerror(code))
+
+
+def _visible_name(value):
+    return (isinstance(value, str) and 1 <= len(value.strip()) <= 80
+            and not any(ord(ch) < 32 or 127 <= ord(ch) <= 159 or ord(ch) in
+                        {0x2028, 0x2029, 0x061c, 0x200b, 0x200e, 0x200f,
+                         *range(0x202a, 0x202f), *range(0x2066, 0x206a), 0xfeff}
+                        for ch in value))
+
+
+def _history_object(raw, body, world):
+    if not isinstance(raw, str):
+        raise ValueError('History snapshot must be JSON text')
+    try:
+        value = json.loads(raw)
+    except (ValueError, RecursionError) as error:
+        raise ValueError('Invalid history JSON') from error
+    import math
+    required = {'id', 'kind', 'name', 'x', 'y', 'radius'}
+    if (not isinstance(value, dict) or not required.issubset(value)
+            or set(value) - required - {'world_id'} or value['id'] != body
+            or ('world_id' in value and value['world_id'] != world)
+            or not isinstance(value['kind'], str) or not value['kind']
+            or not _visible_name(value['name'])
+            or any(type(value[k]) not in (int, float) or not math.isfinite(value[k])
+                   for k in ('x', 'y', 'radius'))
+            or not 0 <= value['x'] <= 1 or not 0 <= value['y'] <= 1
+            or not .01 <= value['radius'] <= .25):
+        raise ValueError('Invalid history object snapshot')
 
 
 def _check_database(path, expected_world=None, *, project=False):
@@ -113,25 +145,37 @@ def _check_database(path, expected_world=None, *, project=False):
             if not rows or any(not isinstance(r[0], str) or not r[0] for r in rows):
                 raise ValueError('Nonempty project world identities required')
             ids = [r[0] for r in rows]
+            if len(set(ids)) != len(ids):
+                raise ValueError('Duplicate world identities')
             if expected_world is not None and ids != expected_world:
                 raise ValueError('Wrong project world identities')
             if c.execute('pragma user_version').fetchone()[0] not in (1, 2):
                 raise ValueError('Unsupported project database version')
+            for name, schema_version in c.execute('SELECT name,schema_version FROM worlds'):
+                # Current app stores per-world schema_version=1 even with DB user_version=2.
+                if not _visible_name(name) or type(schema_version) is not int or schema_version != 1:
+                    raise ValueError('Invalid world metadata')
             world_set = set(ids)
             objects = {}
             for body, world, kind, name, x, y, radius in c.execute('select id,world_id,kind,name,x,y,radius from objects'):
                 if (not isinstance(body, str) or not body or body in objects
                         or world not in world_set or not isinstance(kind, str) or not kind
-                        or not isinstance(name, str) or not name.strip() or len(name.strip()) > 80
-                        or any(ord(ch) < 32 or 127 <= ord(ch) <= 159 or ord(ch) in
-                               {0x2028, 0x2029, 0x061c, 0x200b, 0x200e, 0x200f,
-                                *range(0x202a, 0x202f), *range(0x2066, 0x206a), 0xfeff} for ch in name)
+                        or not _visible_name(name)
                         or any(not isinstance(v, (int, float)) or not math.isfinite(v) for v in (x, y, radius))
                         or not 0 <= x <= 1 or not 0 <= y <= 1 or not .01 <= radius <= .25):
                     raise ValueError('Invalid project object')
                 objects[body] = (world, x, y)
-            if c.execute('select 1 from changes where world_id not in (select id from worlds) or world_id is null limit 1').fetchone():
-                raise ValueError('Invalid project history world')
+            history_ids = set()
+            for change_id, world, body, before, after in c.execute(
+                    'SELECT id,world_id,object_id,before_json,after_json FROM changes'):
+                if (type(change_id) is not int or change_id <= 0 or change_id in history_ids
+                        or world not in world_set or body not in objects
+                        or objects[body][0] != world):
+                    raise ValueError('Invalid project history identity')
+                history_ids.add(change_id)
+                if before is not None:
+                    _history_object(before, body, world)
+                _history_object(after, body, world)
             if c.execute("select 1 from sqlite_master where type='table' and name='authored_orbits'").fetchone():
                 import math
                 parents = {}
@@ -241,7 +285,14 @@ def export(database, destination, *, project=False):
                 f.flush()
                 os.fsync(f.fileno())
             validate(parent / pending)
+            original_bytes = (parent / pending).read_bytes()
+            original_stat = os.stat(pending, dir_fd=fd, follow_symlinks=False)
             _checkpoint('export_before_publish')
+            current_stat = os.stat(pending, dir_fd=fd, follow_symlinks=False)
+            if ((original_stat.st_dev, original_stat.st_ino) != (current_stat.st_dev, current_stat.st_ino)
+                    or (parent / pending).is_symlink()
+                    or (parent / pending).read_bytes() != original_bytes):
+                raise ValueError('Export staging object replaced')
             os.link(pending, out.name, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
             _checkpoint('export_after_publish')
             _sync_dir(fd)
@@ -273,7 +324,13 @@ def restore(package, destination):
             _sync_dir(stage_fd)
         finally:
             os.close(stage_fd)
+        original_stat = os.stat(pending, dir_fd=fd, follow_symlinks=False)
         _checkpoint('restore_before_publish')
+        current_stat = os.stat(pending, dir_fd=fd, follow_symlinks=False)
+        if ((original_stat.st_dev, original_stat.st_ino) != (current_stat.st_dev, current_stat.st_ino)
+                or (stage / 'world.sqlite').is_symlink()
+                or (stage / 'world.sqlite').read_bytes() != data):
+            raise ValueError('Restore staging object changed')
         _rename_new_dir(fd, pending, out.name)
         pending = None
         _checkpoint('restore_after_publish')
