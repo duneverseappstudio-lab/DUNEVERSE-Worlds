@@ -28,7 +28,7 @@ cd ..
 python3 -m unittest discover -s python_tools -v
 ```
 
-The clean source snapshot passed 100 Flutter tests and 60 Python tests on 2026-11-24. These test counts do not establish phone startup or safety on real user data. No secrets, user databases, account/session files, build products, or private conversation history belong in this repository.
+The clean source snapshot passed 100 Flutter tests and 70 Python tests on 2026-11-25. These test counts do not establish phone startup or safety on real user data. No secrets, user databases, account/session files, build products, or private conversation history belong in this repository.
 
 ## Font
 Cairo font is distributed under the SIL Open Font License. See `app/assets/fonts/OFL.txt`.
@@ -39,3 +39,8 @@ The offline project validator now rejects triggers, views, virtual tables, appli
 Export must read the original live SQLite database through the SQLite backup API. Do not copy just the main `.sqlite` file from a running app: committed data may still be in its WAL and a main-only copy can look valid while stale. Do not copy the main file and WAL independently as a replacement for the backup API. A read-only SQLite export can still create empty WAL/SHM files beside a WAL-mode source; this is a known remaining side effect. Original database content is not rewritten, but the source directory is not guaranteed untouched. This is one reason the utility remains experimental and restricted to disposable data.
 
 Android OS backup policy is still implicit in the platform template. It is not this offline utility, and its behavior has not been audited on a physical device. No Android startup fix or real-data backup-safety claim follows from these changes.
+
+### Follow-up data and local-publication checks
+Project history is an audit log, not the current in-memory editor undo stack. Validation now checks positive unique history IDs, existing same-world object references, JSON snapshot shape/identity, safe names and editor-range geometry. Before snapshots accept the SQLite row shape (including `world_id`); after snapshots accept the app's serialized object shape. World names follow the same safe-name policy, and per-world `schema_version` must be 1, as written by the current app even when SQLite `user_version` is 2. Older experimental packs containing placeholder/malformed history or incompatible metadata are intentionally rejected, not repaired silently.
+
+Publication requires a destination parent owned by the current user with no group/world write bits. Use a private owned output directory, not `/tmp` itself or a shared-writable directory. Staging inode and byte checks detect the tested pre-publication replacement and modification cases. These checks do not make publication race-proof against a concurrent process running as the same user (or root) with access to the destination parent. That case remains outside the utility's threat model; do not use an output directory while another process is modifying it. This conditional local-filesystem issue does not establish remote exposure or explain Android startup.
