@@ -28,7 +28,7 @@ cd ..
 python3 -m unittest discover -s python_tools -v
 ```
 
-The clean source snapshot passed 100 Flutter tests and 70 Python tests on 2026-11-25. These test counts do not establish phone startup or safety on real user data. No secrets, user databases, account/session files, build products, or private conversation history belong in this repository.
+The clean source snapshot passed 105 Flutter tests and 70 Python tests on 2026-11-25. These test counts do not establish phone startup or safety on real user data. No secrets, user databases, account/session files, build products, or private conversation history belong in this repository.
 
 ## Font
 Cairo font is distributed under the SIL Open Font License. See `app/assets/fonts/OFL.txt`.
@@ -44,3 +44,6 @@ Android OS backup policy is still implicit in the platform template. It is not t
 Project history is an audit log, not the current in-memory editor undo stack. Validation now checks positive unique history IDs, existing same-world object references, JSON snapshot shape/identity, safe names and editor-range geometry. Before snapshots accept the SQLite row shape (including `world_id`); after snapshots accept the app's serialized object shape. World names follow the same safe-name policy, and per-world `schema_version` must be 1, as written by the current app even when SQLite `user_version` is 2. Older experimental packs containing placeholder/malformed history or incompatible metadata are intentionally rejected, not repaired silently.
 
 Publication requires a destination parent owned by the current user with no group/world write bits. Use a private owned output directory, not `/tmp` itself or a shared-writable directory. Staging inode and byte checks detect the tested pre-publication replacement and modification cases. These checks do not make publication race-proof against a concurrent process running as the same user (or root) with access to the destination parent. That case remains outside the utility's threat model; do not use an output directory while another process is modifying it. This conditional local-filesystem issue does not establish remote exposure or explain Android startup.
+
+## Startup observability candidate
+The app now paints an Arabic loading screen before beginning storage initialization, offers a generic error/retry state, and records phase labels without database paths or raw errors. Async support-directory lookup and directory creation each have a 15-second timeout. Retry is single-flight, failed constructor handles are closed, and late results are closed if the startup widget has gone away. Timeouts do not cancel underlying platform/filesystem operations; a retry may overlap a previously timed-out directory operation. Synchronous SQLite initialization and native Flutter/plugin startup cannot be interrupted by these Dart timeouts. Local widget tests and an ARM64 build do not prove physical ARM64 opening or fix the reported phone failure. No new APK is presented as launch-tested.
