@@ -260,7 +260,7 @@ class Audit(unittest.TestCase):
           CREATE TABLE changes(id INTEGER PRIMARY KEY AUTOINCREMENT,world_id TEXT NOT NULL REFERENCES worlds(id),object_id TEXT NOT NULL,before_json TEXT,after_json TEXT NOT NULL);
           INSERT INTO worlds VALUES('phase0','fixture',1);
           INSERT INTO objects VALUES('obj','phase0','planet','fixture',.4,.5,.03);
-          INSERT INTO changes(world_id,object_id,after_json) VALUES('phase0','obj','{}');""")
+          INSERT INTO changes(world_id,object_id,after_json) VALUES( 'phase0','obj','{"id":"obj","kind":"planet","name":"fixture","x":0.4,"y":0.5,"radius":0.03}' );""")
         c.close()
         before = fixture.read_bytes()
         w.export(fixture, self.pack); w.restore(self.pack, self.dest)
