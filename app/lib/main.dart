@@ -15,19 +15,114 @@ import 'render_contract.dart' as render;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Paint an app-owned status before waiting on a platform plugin or storage.
+  runApp(const StartupGate());
+}
+
+Future<ForgeStore> openStartupStore({
+  Duration stepTimeout = const Duration(seconds: 15),
+}) async {
+  debugPrint('DUNEVERSE startup: support-directory');
+  final root = await getApplicationSupportDirectory().timeout(stepTimeout);
+  debugPrint('DUNEVERSE startup: create-directory');
+  await root.create(recursive: true).timeout(stepTimeout);
+  // SQLite open/schema setup is synchronous. A Dart timeout cannot interrupt it.
+  debugPrint('DUNEVERSE startup: sqlite-open');
+  final db = sqlite3.open('${root.path}${Platform.pathSeparator}phase0.sqlite');
   try {
-    final root = await getApplicationSupportDirectory();
-    await root.create(recursive: true);
-    final store = ForgeStore(
-      sqlite3.open('${root.path}${Platform.pathSeparator}phase0.sqlite'),
-    );
+    final store = ForgeStore(db);
     store.ensureWorld('technical-proof', 'اختبار المحرر');
-    runApp(ForgeApp(store: store));
-  } catch (e) {
-    runApp(
-      MaterialApp(
-        home: Scaffold(
-          body: Center(child: Text('تعذر فتح التخزين المحلي: $e')),
+    debugPrint('DUNEVERSE startup: editor-ready');
+    return store;
+  } catch (_) {
+    db.close();
+    rethrow;
+  }
+}
+
+class StartupGate extends StatefulWidget {
+  final Future<ForgeStore> Function()? initialize;
+  const StartupGate({super.key, this.initialize});
+  @override
+  State<StartupGate> createState() => _StartupGateState();
+}
+
+class _StartupGateState extends State<StartupGate> {
+  ForgeStore? store;
+  bool failed = false;
+  bool busy = false;
+  int attempt = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) start();
+    });
+  }
+
+  Future<void> start() async {
+    if (busy || store != null) return;
+    busy = true;
+    final current = ++attempt;
+    setState(() => failed = false);
+    try {
+      final opened = await (widget.initialize ?? openStartupStore)();
+      if (!mounted || current != attempt) {
+        opened.db.close();
+        return;
+      }
+      setState(() => store = opened);
+    } catch (error) {
+      // Avoid logging paths, database contents or exception text.
+      debugPrint('DUNEVERSE startup: failed (${error.runtimeType})');
+      if (mounted && current == attempt) setState(() => failed = true);
+    } finally {
+      if (mounted && current == attempt) busy = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    attempt++;
+    store?.db.close();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (store case final opened?) return ForgeApp(store: opened);
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Cairo'),
+      home: Scaffold(
+        body: Center(
+          child: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!failed)
+                  const Icon(
+                    Icons.hourglass_empty,
+                    size: 32,
+                    semanticLabel: 'جارٍ الفتح',
+                  ),
+                const SizedBox(height: 16),
+                Text(
+                  failed
+                      ? 'تعذر فتح التخزين المحلي. حاول مرة أخرى.'
+                      : 'جارٍ فتح عالمك...',
+                ),
+                if (failed)
+                  TextButton(
+                    key: const Key('startup-retry'),
+                    onPressed: start,
+                    child: const Text('إعادة المحاولة'),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
