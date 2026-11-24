@@ -79,6 +79,21 @@ def _check_database(path, expected_world=None, *, project=False):
             raise ValueError('Database corruption')
         if c.execute('pragma foreign_key_check').fetchall():
             raise ValueError('Broken references')
+        schema = c.execute('SELECT type,name,tbl_name,sql FROM sqlite_master').fetchall()
+        # A validated snapshot is data, never executable schema supplied by a pack.
+        for kind, name, table, sql in schema:
+            if kind in ('trigger', 'view') or (sql and 'CREATE VIRTUAL TABLE' in sql.upper()):
+                raise ValueError('Executable or virtual database schema is not allowed')
+            if kind == 'index' and (sql is not None or not name.startswith('sqlite_autoindex_')):
+                raise ValueError('Application-defined indexes are not allowed')
+            if kind not in ('table', 'index'):
+                raise ValueError('Unsupported database schema object')
+        if not any(kind == 'table' and name == 'worlds' for kind,name,_,_ in schema):
+            raise ValueError('Missing worlds table')
+        if project:
+            allowed = {'worlds', 'objects', 'changes', 'authored_orbits', 'sqlite_sequence'}
+            if any(kind == 'table' and name not in allowed for kind,name,_,_ in schema):
+                raise ValueError('Unexpected project table')
         rows = c.execute('select id from worlds order by id').fetchall()
         if project:
             import math
@@ -92,8 +107,8 @@ def _check_database(path, expected_world=None, *, project=False):
                 required['authored_orbits'] = {'body_id', 'center_id', 'seconds', 'clockwise'}
             for table, columns in required.items():
                 entry = c.execute("select type from sqlite_master where name=?", (table,)).fetchall()
-                actual = {r[1] for r in c.execute('pragma table_info(' + table + ')')}
-                if entry != [('table',)] or not columns.issubset(actual):
+                actual = {r[1] for r in c.execute('pragma table_xinfo(' + table + ')')}
+                if entry != [('table',)] or columns != actual:
                     raise ValueError('Missing or incompatible project table: ' + table)
             if not rows or any(not isinstance(r[0], str) or not r[0] for r in rows):
                 raise ValueError('Nonempty project world identities required')
@@ -107,9 +122,12 @@ def _check_database(path, expected_world=None, *, project=False):
             for body, world, kind, name, x, y, radius in c.execute('select id,world_id,kind,name,x,y,radius from objects'):
                 if (not isinstance(body, str) or not body or body in objects
                         or world not in world_set or not isinstance(kind, str) or not kind
-                        or not isinstance(name, str) or not name.strip()
+                        or not isinstance(name, str) or not name.strip() or len(name.strip()) > 80
+                        or any(ord(ch) < 32 or 127 <= ord(ch) <= 159 or ord(ch) in
+                               {0x2028, 0x2029, 0x061c, 0x200b, 0x200e, 0x200f,
+                                *range(0x202a, 0x202f), *range(0x2066, 0x206a), 0xfeff} for ch in name)
                         or any(not isinstance(v, (int, float)) or not math.isfinite(v) for v in (x, y, radius))
-                        or radius <= 0):
+                        or not 0 <= x <= 1 or not 0 <= y <= 1 or not .01 <= radius <= .25):
                     raise ValueError('Invalid project object')
                 objects[body] = (world, x, y)
             if c.execute('select 1 from changes where world_id not in (select id from worlds) or world_id is null limit 1').fetchone():
@@ -137,6 +155,10 @@ def _check_database(path, expected_world=None, *, project=False):
             raise ValueError('One nonempty world identity required')
         if expected_world is not None and rows != [(expected_world,)]:
             raise ValueError('Wrong world identity')
+        # A Flutter project in a legacy envelope still receives full project checks.
+        if any(kind == 'table' and name in {'objects', 'changes', 'authored_orbits'}
+               for kind,name,_,_ in schema):
+            _check_database(path, [rows[0][0]], project=True)
         return rows[0][0]
     finally:
         c.close()
@@ -242,7 +264,10 @@ def restore(package, destination):
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        _check_database(stage / 'world.sqlite', manifest.get('world_ids',manifest.get('world_id')), project=manifest['format']=='iwfproject')
+        # validate() already checked these exact bytes on a private temporary copy.
+        # Do not reopen the publication stage: a read-only WAL connection creates sidecars.
+        if (stage / 'world.sqlite').read_bytes() != data:
+            raise ValueError('Staged database differs from validated bytes')
         stage_fd = os.open(pending, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
         try:
             _sync_dir(stage_fd)
