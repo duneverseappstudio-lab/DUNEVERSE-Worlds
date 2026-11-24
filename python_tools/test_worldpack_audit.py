@@ -72,7 +72,7 @@ class Audit(unittest.TestCase):
 
     def test_empty_source(self):
         empty = self.root / 'empty.sqlite'; empty.touch()
-        with self.assertRaises(sqlite3.DatabaseError): w.export(empty, self.pack)
+        with self.assertRaises(ValueError): w.export(empty, self.pack)
         self.assertEqual(empty.read_bytes(), b''); self.assertFalse(self.pack.exists())
 
     def test_corrupt_source(self):
@@ -259,7 +259,7 @@ class Audit(unittest.TestCase):
           CREATE TABLE objects(id TEXT PRIMARY KEY,world_id TEXT NOT NULL REFERENCES worlds(id),kind TEXT NOT NULL,name TEXT NOT NULL,x REAL NOT NULL,y REAL NOT NULL,radius REAL NOT NULL CHECK(radius>0));
           CREATE TABLE changes(id INTEGER PRIMARY KEY AUTOINCREMENT,world_id TEXT NOT NULL REFERENCES worlds(id),object_id TEXT NOT NULL,before_json TEXT,after_json TEXT NOT NULL);
           INSERT INTO worlds VALUES('phase0','fixture',1);
-          INSERT INTO objects VALUES('obj','phase0','planet','fixture',1,2,3);
+          INSERT INTO objects VALUES('obj','phase0','planet','fixture',.4,.5,.03);
           INSERT INTO changes(world_id,object_id,after_json) VALUES('phase0','obj','{}');""")
         c.close()
         before = fixture.read_bytes()
@@ -268,7 +268,7 @@ class Audit(unittest.TestCase):
         c = sqlite3.connect(self.dest / 'world.sqlite')
         try:
             self.assertEqual(c.execute('pragma user_version').fetchone(), (1,))
-            self.assertEqual(c.execute('select x,y,radius from objects').fetchone(), (1.0,2.0,3.0))
+            self.assertEqual(c.execute('select x,y,radius from objects').fetchone(), (.4,.5,.03))
             self.assertEqual(c.execute('select count(*) from changes').fetchone(), (1,))
         finally: c.close()
 
