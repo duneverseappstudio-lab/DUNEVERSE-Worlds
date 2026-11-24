@@ -28,7 +28,14 @@ cd ..
 python3 -m unittest discover -s python_tools -v
 ```
 
-The clean source snapshot passed 97 Flutter tests and 55 Python tests on 2026-11-24. These test counts do not establish phone startup or safety on real user data. No secrets, user databases, account/session files, build products, or private conversation history belong in this repository.
+The clean source snapshot passed 100 Flutter tests and 60 Python tests on 2026-11-24. These test counts do not establish phone startup or safety on real user data. No secrets, user databases, account/session files, build products, or private conversation history belong in this repository.
 
 ## Font
 Cairo font is distributed under the SIL Open Font License. See `app/assets/fonts/OFL.txt`.
+
+## Offline backup safety notes (review hardening)
+The offline project validator now rejects triggers, views, virtual tables, application-defined indexes, unexpected project tables/columns, out-of-editor-range geometry and unsafe control characters in object names. The legacy single-world format is not a project import format; it must not be used to bypass project validation. Both formats reject executable schema. Restore publishes only the exact validated main database bytes, without validation-created WAL/SHM files.
+
+Export must read the original live SQLite database through the SQLite backup API. Do not copy just the main `.sqlite` file from a running app: committed data may still be in its WAL and a main-only copy can look valid while stale. Do not copy the main file and WAL independently as a replacement for the backup API. A read-only SQLite export can still create empty WAL/SHM files beside a WAL-mode source; this is a known remaining side effect. Original database content is not rewritten, but the source directory is not guaranteed untouched. This is one reason the utility remains experimental and restricted to disposable data.
+
+Android OS backup policy is still implicit in the platform template. It is not this offline utility, and its behavior has not been audited on a physical device. No Android startup fix or real-data backup-safety claim follows from these changes.
