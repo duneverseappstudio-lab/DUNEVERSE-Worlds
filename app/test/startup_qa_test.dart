@@ -1,4 +1,9 @@
 import 'dart:io';
+import 'dart:async';
+
+import 'package:flutter/services.dart';
+
+import 'package:imperator_forge/forge_store.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -14,6 +19,15 @@ class StartupPaths extends PathProviderPlatform {
 }
 
 void main() {
+  setUpAll(() async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    await (FontLoader(
+      'Cairo',
+    )..addFont(rootBundle.load('assets/fonts/Cairo.ttf'))).load();
+    await (FontLoader(
+      'MaterialIcons',
+    )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
+  });
   late Directory scratch;
   late PathProviderPlatform original;
   setUp(() {
@@ -28,7 +42,11 @@ void main() {
   testWidgets('actual main opens fresh synthetic storage and editor', (
     t,
   ) async {
-    await t.runAsync(() => app.main());
+    await app.main();
+    await t.pump();
+    await t.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
     await t.pumpAndSettle();
     expect(find.byType(app.ForgeApp), findsOneWidget);
     expect(find.textContaining('تعذر فتح التخزين المحلي'), findsNothing);
@@ -49,7 +67,11 @@ void main() {
     final db = sqlite3.open('${scratch.path}/phase0.sqlite');
     db.execute('PRAGMA user_version=99');
     db.close();
-    await t.runAsync(() => app.main());
+    await app.main();
+    await t.pump();
+    await t.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
     await t.pumpAndSettle();
     expect(find.textContaining('تعذر فتح التخزين المحلي'), findsOneWidget);
     expect(find.byType(app.ForgeApp), findsNothing);
@@ -65,7 +87,18 @@ void main() {
       final blocked = File('${scratch.path}/not-a-directory')
         ..writeAsStringSync('synthetic sentinel');
       PathProviderPlatform.instance = StartupPaths('${blocked.path}/child');
-      await t.runAsync(() => app.main());
+      await app.main();
+      await t.pump();
+      for (
+        var i = 0;
+        i < 50 && find.byKey(const Key('startup-retry')).evaluate().isEmpty;
+        i++
+      ) {
+        await t.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await t.pump();
+      }
       await t.pumpAndSettle();
       expect(find.textContaining('تعذر فتح التخزين المحلي'), findsOneWidget);
       expect(blocked.readAsStringSync(), 'synthetic sentinel');
@@ -73,4 +106,96 @@ void main() {
       await t.pumpWidget(const SizedBox.shrink());
     },
   );
+  testWidgets('loading status paints while initialization is pending', (
+    t,
+  ) async {
+    final pending = Completer<ForgeStore>();
+    await t.pumpWidget(
+      RepaintBoundary(child: app.StartupGate(initialize: () => pending.future)),
+    );
+    await t.pumpAndSettle();
+    expect(find.text('جارٍ فتح عالمك...'), findsOneWidget);
+    expect(find.byKey(const Key('startup-retry')), findsNothing);
+    await t.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('failed initialization offers retry and reaches editor once', (
+    t,
+  ) async {
+    var calls = 0;
+    await t.pumpWidget(
+      RepaintBoundary(
+        child: app.StartupGate(
+          initialize: () async {
+            calls++;
+            if (calls == 1) throw StateError('synthetic failure');
+            final store = ForgeStore(sqlite3.openInMemory());
+            store.ensureWorld('technical-proof', 'اختبار المحرر');
+            return store;
+          },
+        ),
+      ),
+    );
+    await t.pumpAndSettle();
+    expect(find.textContaining('تعذر فتح التخزين المحلي'), findsOneWidget);
+    await t.tap(find.byKey(const Key('startup-retry')));
+    await t.pumpAndSettle();
+    expect(find.byType(app.ForgeApp), findsOneWidget);
+    expect(calls, 2);
+    expect(t.takeException(), isNull);
+    await t.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('retry is single-flight under rapid taps', (t) async {
+    final pending = Completer<ForgeStore>();
+    var calls = 0;
+    await t.pumpWidget(
+      app.StartupGate(
+        initialize: () {
+          calls++;
+          if (calls == 1) return Future.error(StateError('synthetic'));
+          return pending.future;
+        },
+      ),
+    );
+    await t.pumpAndSettle();
+    final retry = find.byKey(const Key('startup-retry'));
+    await t.tap(retry);
+    await t.tap(retry);
+    await t.pump();
+    expect(calls, 2);
+    await t.pumpWidget(const SizedBox.shrink());
+    pending.complete(ForgeStore(sqlite3.openInMemory()));
+    await t.pump();
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('late initializer is closed after gate disposal', (t) async {
+    final pending = Completer<ForgeStore>();
+    await t.pumpWidget(app.StartupGate(initialize: () => pending.future));
+    await t.pumpWidget(const SizedBox.shrink());
+    final store = ForgeStore(sqlite3.openInMemory());
+    pending.complete(store);
+    await t.pump();
+    expect(() => store.db.select('SELECT 1'), throwsStateError);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('stalled path provider times out without opening a database', (
+    t,
+  ) async {
+    PathProviderPlatform.instance = PendingStartupPaths();
+    final result = app.openStartupStore(
+      stepTimeout: const Duration(milliseconds: 50),
+    );
+    final expectation = expectLater(result, throwsA(isA<TimeoutException>()));
+    await t.pump(const Duration(milliseconds: 60));
+    await expectation;
+    expect(scratch.listSync(), isEmpty);
+  });
+}
+
+class PendingStartupPaths extends PathProviderPlatform {
+  @override
+  Future<String?> getApplicationSupportPath() => Completer<String?>().future;
 }
