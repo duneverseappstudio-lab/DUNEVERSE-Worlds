@@ -1,0 +1,17 @@
+**/.dart_tool/
+**/build/
+**/.gradle/
+**/ephemeral/
+**/__pycache__/
+**/local.properties
+**/Generated.xcconfig
+**/flutter_export_environment.sh
+**/.flutter-plugins-dependencies
+*.log
+*.jks
+*.keystore
+*.key
+*.pem
+*.sqlite*
+*.db
+.env*
