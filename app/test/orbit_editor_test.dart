@@ -5,6 +5,8 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:imperator_forge/main.dart';
 import 'package:imperator_forge/forge_store.dart';
 import 'package:imperator_forge/motion_lab.dart';
+import 'package:imperator_forge/orbit_editor.dart';
+import 'package:imperator_forge/authored_orbit.dart';
 
 void main() {
   testWidgets(
@@ -64,14 +66,14 @@ void main() {
       expect(find.textContaining('مدة الدورة: 60'), findsOneWidget);
       await expectLater(
         find.byType(ForgeApp),
-        matchesGoldenFile('goldens/saved-orbits-390.png'),
+        matchesGoldenFile('goldens/2-1-saved-orbits-390.png'),
       );
       for (final size in [const Size(320, 700), const Size(844, 390)]) {
         t.view.physicalSize = size;
         await t.pumpAndSettle();
         await expectLater(
           find.byType(ForgeApp),
-          matchesGoldenFile('goldens/saved-orbits-${size.width.round()}.png'),
+          matchesGoldenFile(size.width == 320 ? 'goldens/1-saved-orbits-320.png' : 'goldens/3-1-saved-orbits-844.png'),
         );
       }
       t.view.physicalSize = const Size(390, 844);
@@ -117,6 +119,64 @@ void main() {
         before,
       );
       expect(s.orbits('technical-proof').map((o) => o.seconds), [60, 12]);
+      expect(t.takeException(), isNull);
+      await t.pumpWidget(const SizedBox.shrink());
+      s.close();
+    },
+  );
+  testWidgets(
+    'orbit toolbar reverses edit and removal and disables on reopen',
+    (t) async {
+      final s = ForgeStore(sqlite3.openInMemory());
+      s.ensureWorld('w', 'W');
+      s.save('w', const SpaceObject('s', 'star', 'Sun', .2, .3, .04));
+      s.save('w', const SpaceObject('p', 'planet', 'Planet', .5, .4, .03));
+      s.saveOrbit('w', const AuthoredOrbit('p', 's', 24, false));
+      await t.pumpWidget(
+        MaterialApp(
+          home: OrbitEditor(store: s, worldId: 'w'),
+        ),
+      );
+      await t.pumpAndSettle();
+      expect(
+        t.widget<IconButton>(find.byKey(const Key('orbit-undo'))).onPressed,
+        isNull,
+      );
+      await t.tap(find.byKey(const Key('orbit-body')));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Planet').last);
+      await t.pumpAndSettle();
+      await t.tap(find.text('60 ث'));
+      await t.pumpAndSettle();
+      await t.ensureVisible(find.byKey(const Key('save-orbit')));
+      await t.tap(find.byKey(const Key('save-orbit')));
+      await t.pumpAndSettle();
+      expect(s.orbits('w').single.seconds, 60);
+      await t.tap(find.byKey(const Key('orbit-undo')));
+      await t.pumpAndSettle();
+      expect(s.orbits('w').single.seconds, 24);
+      await t.tap(find.byKey(const Key('orbit-redo')));
+      await t.pumpAndSettle();
+      expect(s.orbits('w').single.seconds, 60);
+      await t.ensureVisible(find.byKey(const Key('remove-orbit-p')));
+      await t.tap(find.byKey(const Key('remove-orbit-p')));
+      await t.pumpAndSettle();
+      expect(s.orbits('w'), isEmpty);
+      await t.tap(find.byKey(const Key('orbit-undo')));
+      await t.pumpAndSettle();
+      expect(s.orbits('w').single.seconds, 60);
+      await t.pumpWidget(const SizedBox.shrink());
+      await t.pumpWidget(
+        MaterialApp(
+          home: OrbitEditor(store: s, worldId: 'w'),
+        ),
+      );
+      await t.pumpAndSettle();
+      expect(
+        t.widget<IconButton>(find.byKey(const Key('orbit-undo'))).onPressed,
+        isNull,
+      );
+      expect(s.orbits('w').single.seconds, 60);
       expect(t.takeException(), isNull);
       await t.pumpWidget(const SizedBox.shrink());
       s.close();
