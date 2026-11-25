@@ -12,6 +12,16 @@ class AuthoredOrbit {
   const AuthoredOrbit(this.bodyId, this.centerId, this.seconds, this.clockwise);
 }
 
+/// Compare persisted path values, including the absent-path state.
+bool sameOrbit(AuthoredOrbit? a, AuthoredOrbit? b) =>
+    identical(a, b) ||
+    (a != null &&
+        b != null &&
+        a.bodyId == b.bodyId &&
+        a.centerId == b.centerId &&
+        a.seconds == b.seconds &&
+        a.clockwise == b.clockwise);
+
 MotionPreview authoredMotion(
   List<SpaceObject> objects,
   List<AuthoredOrbit> orbits,
