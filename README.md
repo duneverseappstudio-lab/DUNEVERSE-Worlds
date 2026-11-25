@@ -11,7 +11,7 @@ Flutter and Python development snapshot. This is an incomplete 2D world editor, 
 ## Current limits
 The latest ARM64 trial was reported not to open on the user's phone. The failure stage and cause remain unverified. Prior x64 emulator startup is not ARM64 runtime proof. Do not treat this snapshot as a fix.
 
-No 3D integration, asteroid-belt generation, AdMob SDK, store release, cloud sync, or Android backup interface. Orbit changes are not covered by undo. Python backup is an experimental Linux-only utility and must only be tested on disposable data until the broader schema validation work is complete.
+No 3D integration, asteroid-belt generation, AdMob SDK, store release, cloud sync, or Android backup interface. Saved circular-path changes and removals have their own undo/redo history within each orbit-screen visit (up to100operations). It is separate from canvas geometry history and does not survive leaving the page. Python backup is an experimental Linux-only utility and must only be tested on disposable data until the broader schema validation work is complete.
 
 The Android package is `studio.duneverse.imperator_worlds_trial`. It is separate from the earlier trial and starts empty, without importing earlier worlds. Debug signing is used for development builds, never a production signing key.
 
@@ -28,7 +28,7 @@ cd ..
 python3 -m unittest discover -s python_tools -v
 ```
 
-The clean source snapshot passed 105 Flutter tests and 70 Python tests on 2026-11-25. These test counts do not establish phone startup or safety on real user data. No secrets, user databases, account/session files, build products, or private conversation history belong in this repository.
+The clean source snapshot passed 114 Flutter tests and 70 Python tests on 2026-11-25. These test counts do not establish phone startup or safety on real user data. No secrets, user databases, account/session files, build products, or private conversation history belong in this repository.
 
 ## Font
 Cairo font is distributed under the SIL Open Font License. See `app/assets/fonts/OFL.txt`.
@@ -47,3 +47,6 @@ Publication requires a destination parent owned by the current user with no grou
 
 ## Startup observability candidate
 The app now paints an Arabic loading screen before beginning storage initialization, offers a generic error/retry state, and records phase labels without database paths or raw errors. Async support-directory lookup and directory creation each have a 15-second timeout. Retry is single-flight, failed constructor handles are closed, and late results are closed if the startup widget has gone away. Timeouts do not cancel underlying platform/filesystem operations; a retry may overlap a previously timed-out directory operation. Synchronous SQLite initialization and native Flutter/plugin startup cannot be interrupted by these Dart timeouts. Local widget tests and an ARM64 build do not prove physical ARM64 opening or fix the reported phone failure. No new APK is presented as launch-tested.
+
+## Circular-path edit history
+The orbit screen now supports undo/redo for saving, editing and removing a saved circular path. Each inverse write compares the current path values inside the same SQLite transaction before changing them. External changes and invalid dependency cycles are not silently overwritten. Failed replay retains its history command, so it can remain blocked until the path is reconciled; reopening the screen starts an empty history without changing saved paths. This is visit-local history, not persistent project-wide undo, and it does not add freehand paths, a 3D engine or Android runtime proof.
