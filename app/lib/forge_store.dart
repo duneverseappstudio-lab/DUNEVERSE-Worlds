@@ -191,28 +191,51 @@ class ForgeStore {
       )
       .toList();
 
-  void saveOrbit(String worldId, AuthoredOrbit orbit) {
+  void saveOrbit(String worldId, AuthoredOrbit orbit) =>
+      changeOrbit(worldId, orbit.bodyId, orbit);
+
+  void removeOrbit(String worldId, String bodyId) {
+    if (!objects(worldId).any((o) => o.id == bodyId)) return;
+    changeOrbit(worldId, bodyId, null);
+  }
+
+  /// Read, compare and write under one transaction. Expected null means absent.
+  void changeOrbit(
+    String worldId,
+    String bodyId,
+    AuthoredOrbit? next, {
+    bool compare = false,
+    AuthoredOrbit? expected,
+  }) {
     db.execute('BEGIN IMMEDIATE');
     try {
-      final proposed = orbits(
-        worldId,
-      ).where((o) => o.bodyId != orbit.bodyId).toList()..add(orbit);
+      if (!objects(worldId).any((o) => o.id == bodyId) ||
+          (next != null && next.bodyId != bodyId)) {
+        throw ArgumentError('Orbit body does not belong to this world');
+      }
+      final existing = orbits(worldId);
+      final matching = existing.where((o) => o.bodyId == bodyId);
+      final current = matching.isEmpty ? null : matching.single;
+      if (compare && !sameOrbit(current, expected)) {
+        throw StateError('Orbit changed since this edit');
+      }
+      final proposed = existing.where((o) => o.bodyId != bodyId).toList();
+      if (next != null) proposed.add(next);
       authoredMotion(objects(worldId), proposed);
-      db.execute(
-        'INSERT INTO authored_orbits VALUES(?,?,?,?) ON CONFLICT(body_id) DO UPDATE SET center_id=excluded.center_id,seconds=excluded.seconds,clockwise=excluded.clockwise',
-        [orbit.bodyId, orbit.centerId, orbit.seconds, orbit.clockwise ? 1 : 0],
-      );
+      if (next == null) {
+        db.execute('DELETE FROM authored_orbits WHERE body_id=?', [bodyId]);
+      } else {
+        db.execute(
+          'INSERT INTO authored_orbits VALUES(?,?,?,?) ON CONFLICT(body_id) DO UPDATE SET center_id=excluded.center_id,seconds=excluded.seconds,clockwise=excluded.clockwise',
+          [next.bodyId, next.centerId, next.seconds, next.clockwise ? 1 : 0],
+        );
+      }
       db.execute('COMMIT');
     } catch (_) {
       db.execute('ROLLBACK');
       rethrow;
     }
   }
-
-  void removeOrbit(String worldId, String bodyId) => db.execute(
-    'DELETE FROM authored_orbits WHERE body_id=? AND body_id IN(SELECT id FROM objects WHERE world_id=?)',
-    [bodyId, worldId],
-  );
 
   void close() => db.close();
 }
