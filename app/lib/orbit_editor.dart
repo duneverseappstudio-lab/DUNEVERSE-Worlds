@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import 'authored_orbit.dart';
 import 'forge_store.dart';
 import 'motion_lab.dart';
+import 'orbit_history.dart';
 
 class OrbitEditor extends StatefulWidget {
   final ForgeStore store;
@@ -16,19 +17,58 @@ class _OrbitEditorState extends State<OrbitEditor> {
   String? bodyId, centerId, error;
   double seconds = 24;
   bool clockwise = false;
+  AuthoredOrbit? base;
+  late final OrbitHistory history;
+  @override
+  void initState() {
+    super.initState();
+    history = OrbitHistory(widget.store, widget.worldId);
+  }
+
+  void refreshSelection() {
+    base = bodyId == null ? null : history.current(bodyId!);
+    centerId = base?.centerId;
+    seconds = base?.seconds ?? 24;
+    clockwise = base?.clockwise ?? false;
+  }
+
+  void replay(bool redo) {
+    try {
+      if (redo) {
+        history.redo();
+      } else {
+        history.undo();
+      }
+      setState(() {
+        refreshSelection();
+        error = null;
+      });
+    } catch (_) {
+      setState(() {
+        refreshSelection();
+        error = 'تعذر التراجع أو الإعادة. عُرضت أحدث القيم ولم تُستبدل. راجع المدار، أو أعد فتح الصفحة لبدء سجل جديد.';
+      });
+    }
+  }
+
   void save() {
     try {
-      widget.store.saveOrbit(
-        widget.worldId,
+      history.change(
+        bodyId!,
         AuthoredOrbit(bodyId!, centerId!, seconds, clockwise),
+        expected: base,
       );
-      setState(() => error = null);
+      setState(() {
+        refreshSelection();
+        error = null;
+      });
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('تم حفظ المدار محليًا')));
     } catch (_) {
-      setState(
-        () => error = 'تعذر الحفظ. اختر مركزًا مختلفًا، بدون دورات اعتماد أو تطابق مواضع.',
-      );
+      setState(() {
+        refreshSelection();
+        error = 'تعذر الحفظ. عُرضت أحدث القيم للمراجعة. اختر مركزًا مختلفًا، بدون دورة اعتماد أو موضع مطابق.';
+      });
     }
   }
 
@@ -39,6 +79,20 @@ class _OrbitEditorState extends State<OrbitEditor> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('مدارات العالم'),
+        actions: [
+          IconButton(
+            key: const Key('orbit-undo'),
+            tooltip: 'تراجع عن تعديل المدار',
+            onPressed: history.canUndo ? () => replay(false) : null,
+            icon: const Icon(Icons.undo),
+          ),
+          IconButton(
+            key: const Key('orbit-redo'),
+            tooltip: 'إعادة تعديل المدار',
+            onPressed: history.canRedo ? () => replay(true) : null,
+            icon: const Icon(Icons.redo),
+          ),
+        ],
         leading: IconButton(
           key: const Key('close-saved-orbits'),
           onPressed: () => Navigator.pop(context),
@@ -63,6 +117,7 @@ class _OrbitEditorState extends State<OrbitEditor> {
               final found = orbits.where((o) => o.bodyId == id);
               setState(() {
                 bodyId = id;
+                base = found.isEmpty ? null : found.first;
                 centerId = found.isEmpty ? null : found.first.centerId;
                 seconds = found.isEmpty ? 24 : found.first.seconds;
                 clockwise = found.isEmpty ? false : found.first.clockwise;
@@ -128,8 +183,18 @@ class _OrbitEditorState extends State<OrbitEditor> {
                 key: Key('remove-orbit-${orbit.bodyId}'),
                 tooltip: 'إزالة المدار فقط',
                 onPressed: () {
-                  widget.store.removeOrbit(widget.worldId, orbit.bodyId);
-                  setState(() {});
+                  try {
+                    history.change(orbit.bodyId, null, expected: orbit);
+                    setState(() {
+                      refreshSelection();
+                      error = null;
+                    });
+                  } catch (_) {
+                    setState(() {
+                      refreshSelection();
+                      error = 'تعذرت إزالة المدار، أعد المحاولة بعد مراجعة التغييرات.';
+                    });
+                  }
                 },
                 icon: const Icon(Icons.delete_outline),
               ),
@@ -149,6 +214,9 @@ class _OrbitEditorState extends State<OrbitEditor> {
                     ),
                   ),
             child: const Text('تشغيل المدارات المحفوظة'),
+          ),
+          const Text(
+            'التراجع والإعادة يشملان حفظ المدار وإزالته خلال هذه الزيارة فقط. مغادرة الصفحة تمسح سجل التراجع، ولا تمسح المدارات المحفوظة.',
           ),
           const Text(
             'تشغيل الحركة لا يغير إحداثيات البداية المحفوظة. التحريك في المحرر يغير شكل المدار عند التشغيل التالي. إزالة المدار لا تحذف الجسم.',
